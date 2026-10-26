@@ -1,5 +1,635 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#f7f4ee"><title>Claudeity</title><style>
-:root{--bg:#f7f4ee;--ink:#292722;--muted:#77736b;--line:#e5e0d7;--accent:#c66a45;--card:#fffdf9}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;background:var(--bg);position:sticky;top:0}.brand{font-size:22px;font-weight:650}.sub{font-size:12px;color:var(--muted);margin-top:2px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#b8b1a5;margin-right:6px}.dot.ok{background:#4e9b6a}main{max-width:760px;margin:auto;padding:20px 15px 180px}.intro{padding:24px 8px 16px}.intro h1{font-size:29px;letter-spacing:-1px;margin:0 0 8px}.intro p{color:var(--muted);line-height:1.45;margin:0}.chat{display:flex;flex-direction:column;gap:14px}.msg{padding:15px 16px;border-radius:18px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-width:95%}.assistant{background:var(--card);border:1px solid var(--line);align-self:flex-start}.user{background:#ece6dc;align-self:flex-end}.name{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px}.composer{position:fixed;bottom:0;left:0;right:0;padding:12px 12px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 12%)}.panel{max-width:760px;margin:auto;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:9px;box-shadow:0 6px 28px #0000000b}textarea{width:100%;border:0;outline:0;resize:none;background:transparent;color:var(--ink);font:16px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;min-height:44px;max-height:100px;padding:9px}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px}.btn{border:0;border-radius:14px;padding:11px 14px;font-size:14px;font-weight:600;background:#eee9e0;color:var(--ink);cursor:pointer}.primary{background:var(--accent);color:white}.round{width:44px;height:44px;border-radius:50%;font-size:18px;padding:0}.status{font-size:12px;color:var(--muted);padding:7px 4px}.settings{display:grid;grid-template-columns:1fr;gap:8px;padding:8px 4px 2px}.settings label{font-size:12px;color:var(--muted)}input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px;background:white;color:var(--ink)}.hidden{display:none!important}.warning{font-size:12px;color:#8b5b38;line-height:1.4;padding:6px 4px}@media(min-width:600px){.settings{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
-</style></head><body><header><div><div class="brand">✳ Claudeity</div><div class="sub">Halloween AI • powered by Claudeity</div></div><div><span id="dot" class="dot"></span><span id="connection">Not connected</span></div></header><main><section class="intro"><h1>What’s on your mind?</h1><p>Talk naturally. Turn on Voice Chat and say “stop” whenever you want to end it.</p></section><section id="chat" class="chat"><div class="msg assistant"><div class="name">Claudeity</div>Hey, it’s Claudeity. Ask me anything. 🎃</div></section></main><div class="composer"><div class="panel"><textarea id="message" rows="1" placeholder="Message Claudeity…" enterkeyhint="send"></textarea><div class="actions"><button id="send" class="btn primary">Send ↗</button><button id="mic" class="btn round" aria-label="Use microphone">🎙️</button><button id="voice" class="btn">🔊 Voice on</button><button id="voiceChat" class="btn">🎧 Start Voice Chat</button><button id="settingsToggle" class="btn">⚙ Setup</button></div><div id="status" class="status">Connect your Colab backend in Setup.</div><div id="settings" class="settings hidden"><div class="wide"><label for="url">Colab backend URL</label><input id="url" type="url" placeholder="https://xxxx.trycloudflare.com" autocapitalize="off"></div><div class="wide"><label for="token">Access token</label><input id="token" type="password" placeholder="Paste token from Colab" autocapitalize="off"></div><div class="wide"><button id="connect" class="btn primary">Connect & test</button></div><div class="wide warning">Keep your access token private. Fish Audio credentials stay in Colab. If microphone input is unsupported in Safari, type your question instead.</div></div></div></div><script>
-const $=id=>document.getElementById(id);let voiceOn=true,busy=false,voiceChatOn=false,recognition=null,recognitionWanted=false,currentAudio=null,isSpeaking=false;function status(t){$('status').textContent=t}function connected(v){$('dot').className='dot'+(v?' ok':'');$('connection').textContent=v?'Connected':'Not connected'}function add(role,text){let e=document.createElement('div');e.className='msg '+role;let n=document.createElement('div');n.className='name';n.textContent=role==='assistant'?'Claudeity':'You';let b=document.createElement('div');b.textContent=text;e.append(n,b);$('chat').append(e);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});return b}function cfg(){return{url:$('url').value.trim().replace(/\/+$/,''),token:$('token').value.trim()}}function stopVoiceChat(message='Voice chat stopped.'){voiceChatOn=false;recognitionWanted=false;isSpeaking=false;try{recognition&&recognition.stop()}catch(e){}try{currentAudio&&currentAudio.pause();if(currentAudio)currentAudio.currentTime=0}catch(e){}currentAudio=null;$('voiceChat').textContent='🎧 Start Voice Chat';status(message)}function startListening(){if(!voiceChatOn||!recognitionWanted||!recognition)return;try{recognition.start()}catch(e){/* already starting or active */}}function pauseListening(){recognitionWanted=false;try{recognition&&recognition.stop()}catch(e){/* already stopped */}}function resumeListening(){if(!voiceChatOn)return;setTimeout(()=>{if(voiceChatOn){recognitionWanted=true;startListening()}},700)}function setupRecognition(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){status('Continuous voice chat is not supported by this browser. Try Safari/Chrome on a supported device, or use the mic button.');return false}recognition=new SR();recognition.lang='en-US';recognition.continuous=true;recognition.interimResults=true;recognition.onresult=e=>{if(!voiceChatOn||!recognitionWanted||isSpeaking||busy)return;let finalText='';let heardStop=false;for(let i=e.resultIndex;i<e.results.length;i++){let t=e.results[i][0].transcript.trim();if(/\bstop\b/i.test(t))heardStop=true;if(e.results[i].isFinal)finalText+=(' '+t)}if(heardStop&&voiceChatOn){stopVoiceChat('You said “stop.” Voice chat ended.');return}if(finalText.trim()&&voiceChatOn&&!isSpeaking&&!busy){$('message').value=finalText.trim();send()}};recognition.onerror=e=>{if(voiceChatOn&&e.error!=='no-speech'&&e.error!=='aborted')status('Microphone issue: '+e.error+'. Check microphone permission.');};recognition.onend=()=>{if(voiceChatOn&&recognitionWanted)setTimeout(()=>{if(voiceChatOn&&recognitionWanted)startListening()},250)};return true}$('settingsToggle').onclick=()=>$('settings').classList.toggle('hidden');$('voice').onclick=()=>{voiceOn=!voiceOn;$('voice').textContent=voiceOn?'🔊 Voice on':'🔇 Voice off';if(!voiceOn&&currentAudio){currentAudio.pause();isSpeaking=false}};$('voiceChat').onclick=()=>{if(voiceChatOn){stopVoiceChat();return}if(!setupRecognition())return;let c=cfg();if(!c.url||!c.token){$('settings').classList.remove('hidden');status('Set up the backend first, then start Voice Chat.');return}voiceChatOn=true;recognitionWanted=true;voiceOn=true;$('voice').textContent='🔊 Voice on';$('voiceChat').textContent='⏹ Stop Voice Chat';status('Voice chat is on. Speak naturally; say “stop” to end it.');startListening()};$('connect').onclick=async()=>{let c=cfg();if(!c.url||!c.token){status('Enter URL and token first.');return}try{status('Testing connection…');let r=await fetch(c.url+'/health');if(!r.ok)throw 0;connected(true);status('Backend reachable. Ready for Halloween. 🎃')}catch(e){connected(false);status('Could not connect. Check URL, token, Colab and tunnel.')}};async function send(){if(busy)return;let message=$('message').value.trim();if(!message)return;let c=cfg();if(!c.url||!c.token){$('settings').classList.remove('hidden');status('Set up the backend first.');return}if(voiceChatOn)pauseListening();$('message').value='';add('user',message);let answer=add('assistant','Thinking…');busy=true;$('send').disabled=true;status('Claudeity is thinking…');try{let r=await fetch(c.url+'/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.token},body:JSON.stringify({message,speak:voiceOn})});if(!r.ok)throw Error('HTTP '+r.status);let d=await r.json();answer.textContent=d.reply||'My artificial brain sneezed. Ask again?';status(d.tts_error?'Text ready; voice service unavailable.':'Reply received.');if(voiceOn&&d.audio_base64){let bytes=Uint8Array.from(atob(d.audio_base64),x=>x.charCodeAt(0));let audio=new Audio(URL.createObjectURL(new Blob([bytes],{type:d.audio_type||'audio/mpeg'})));currentAudio=audio;isSpeaking=true;audio.onended=()=>{if(currentAudio===audio)currentAudio=null;isSpeaking=false;if(voiceChatOn){status('Listening… say “stop” to end voice chat.');resumeListening()}};audio.onerror=()=>{isSpeaking=false;if(currentAudio===audio)currentAudio=null;if(voiceChatOn)resumeListening()};try{await audio.play()}catch(e){isSpeaking=false;status('Tap the page once, then retry audio playback.')}}else if(voiceChatOn){status('Listening… say “stop” to end voice chat.')}}catch(e){answer.textContent='Oops—my cloud brain lost connection. Check the hotspot and Colab runtime, then try again. 🎃';status('Connection failed. Check hotspot / tunnel.');connected(false)}finally{busy=false;$('send').disabled=false;if(voiceChatOn&&!isSpeaking)resumeListening()}}$('send').onclick=send;$('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});$('mic').onclick=()=>{let SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){status('Speech recognition is unavailable here. Type your question instead.');return}try{let r=new SR();r.lang='en-US';r.interimResults=false;status('Listening…');r.onresult=e=>{$('message').value=e.results[0][0].transcript;status('Heard you. Tap Send.');};r.onerror=()=>status('Mic unavailable; check browser permission or type instead.');r.start()}catch(e){status('Could not start mic. Type instead.')}};
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#f7f4ee">
+<title>Claudeity</title>
+<style>
+:root{--bg:#f7f4ee;--ink:#292722;--muted:#77736b;--line:#e5e0d7;--accent:#c66a45;--card:#fffdf9}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;background:var(--bg);position:sticky;top:0}
+.brand{font-size:22px;font-weight:650}
+.sub{font-size:12px;color:var(--muted);margin-top:2px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#b8b1a5;margin-right:6px}
+.dot.ok{background:#4e9b6a}
+main{max-width:760px;margin:auto;padding:20px 15px 180px}
+.intro{padding:24px 8px 16px}
+.intro h1{font-size:29px;letter-spacing:-1px;margin:0 0 8px}
+.intro p{color:var(--muted);line-height:1.45;margin:0}
+.chat{display:flex;flex-direction:column;gap:14px}
+.msg{padding:15px 16px;border-radius:18px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;max-width:95%}
+.assistant{background:var(--card);border:1px solid var(--line);align-self:flex-start}
+.user{background:#ece6dc;align-self:flex-end}
+.name{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px}
+.composer{position:fixed;bottom:0;left:0;right:0;padding:12px 12px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--bg) 12%);z-index:10}
+.panel{max-width:760px;margin:auto;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:9px;box-shadow:0 6px 28px #0000000b}
+textarea{width:100%;border:0;outline:0;resize:none;background:transparent;color:var(--ink);font:16px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;min-height:44px;max-height:100px;padding:9px}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px}
+.btn{border:0;border-radius:14px;padding:11px 14px;font-size:14px;font-weight:600;background:#eee9e0;color:var(--ink);cursor:pointer}
+.primary{background:var(--accent);color:white}
+.round{width:44px;height:44px;border-radius:50%;font-size:18px;padding:0}
+.status{font-size:12px;color:var(--muted);padding:7px 4px}
+.settings{display:grid;grid-template-columns:1fr;gap:8px;padding:8px 4px 2px}
+.settings label{font-size:12px;color:var(--muted)}
+input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px;background:white;color:var(--ink)}
+.hidden{display:none!important}
+.warning{font-size:12px;color:#8b5b38;line-height:1.4;padding:6px 4px}
+.debug-console{max-width:760px;margin:10px auto 0;background:#191919;color:#d8f6d0;border:1px solid #393939;border-radius:12px;padding:10px;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+.debug-console pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:190px;overflow:auto;margin:8px 0}
+.debug-console .btn{font:600 12px -apple-system,BlinkMacSystemFont,sans-serif}
+.debug-actions{display:flex;gap:8px;flex-wrap:wrap}
+.audio-help{font-size:12px;color:var(--muted);padding:4px;line-height:1.4}
+@media(min-width:600px){.settings{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
+</style>
+</head>
+
+<body>
+<header>
+  <div>
+    <div class="brand">✳ Claudeity</div>
+    <div class="sub">Halloween AI • powered by Qwen</div>
+  </div>
+  <div>
+    <span id="dot" class="dot"></span>
+    <span id="connection">Not connected</span>
+  </div>
+</header>
+
+<main>
+  <section class="intro">
+    <h1>What’s on your mind?</h1>
+    <p>Talk naturally. Turn on Voice Chat and say “stop” whenever you want to end it.</p>
+  </section>
+  <section id="chat" class="chat">
+    <div class="msg assistant">
+      <div class="name">Claudeity</div>
+      Hey, it’s Claudeity. Ask me anything. 🎃
+    </div>
+  </section>
+</main>
+
+<div class="composer">
+  <div class="panel">
+    <textarea id="message" rows="1" placeholder="Message Claudeity…" enterkeyhint="send"></textarea>
+
+    <div class="actions">
+      <button id="send" class="btn primary">Send ↗</button>
+      <button id="mic" class="btn round" aria-label="Use microphone">🎙️</button>
+      <button id="voice" class="btn">🔊 Voice on</button>
+      <button id="enableAudio" class="btn">🔓 Enable Audio</button>
+      <button id="debugToggle" class="btn">🐛 Debug</button>
+      <button id="voiceChat" class="btn">🎧 Start Voice Chat</button>
+      <button id="settingsToggle" class="btn">⚙ Setup</button>
+    </div>
+
+    <div id="status" class="status">Connect your Colab backend in Setup.</div>
+    <div id="audioHelp" class="audio-help">On iPhone, tap “Enable Audio” once before trying spoken replies.</div>
+
+    <div id="debugConsole" class="debug-console hidden">
+      <strong>Claudeity debug console</strong>
+      <div class="debug-actions">
+        <button id="retryAudio" class="btn">▶ Retry last audio</button>
+        <button id="clearDebug" class="btn">Clear log</button>
+      </div>
+      <pre id="debugLog">Debug console ready.</pre>
+    </div>
+
+    <div id="settings" class="settings hidden">
+      <div class="wide">
+        <label for="url">Colab backend URL</label>
+        <input id="url" type="url" placeholder="https://xxxx.trycloudflare.com" autocapitalize="off">
+      </div>
+      <div class="wide">
+        <label for="token">Access token</label>
+        <input id="token" type="password" placeholder="Paste token from Colab" autocapitalize="off">
+      </div>
+      <div class="wide">
+        <button id="connect" class="btn primary">Connect & test</button>
+      </div>
+      <div class="wide warning">
+        Keep your access token private. Fish Audio credentials stay in Colab.
+        If microphone input is unsupported in Safari, type your question instead.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+let voiceOn = true;
+let busy = false;
+let voiceChatOn = false;
+let recognition = null;
+let recognitionWanted = false;
+let currentAudio = null;
+let lastAudioUrl = null;
+let isSpeaking = false;
+let audioUnlocked = false;
+
+function log(message) {
+  const line = `[${new Date().toLocaleTimeString()}] ${String(message)}`;
+  const box = $('debugLog');
+
+  if (box) {
+    box.textContent += (box.textContent ? '\n' : '') + line;
+    box.scrollTop = box.scrollHeight;
+  }
+
+  console.log('[Claudeity]', message);
+}
+
+function status(message) {
+  $('status').textContent = message;
+  log('STATUS: ' + message);
+}
+
+function connected(value) {
+  $('dot').className = 'dot' + (value ? ' ok' : '');
+  $('connection').textContent = value ? 'Connected' : 'Not connected';
+}
+
+function add(role, text) {
+  const element = document.createElement('div');
+  element.className = 'msg ' + role;
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = role === 'assistant' ? 'Claudeity' : 'You';
+
+  const body = document.createElement('div');
+  body.textContent = text;
+
+  element.append(name, body);
+  $('chat').append(element);
+  window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});
+
+  return body;
+}
+
+function cfg() {
+  return {
+    url: $('url').value.trim().replace(/\/+$/, ''),
+    token: $('token').value.trim()
+  };
+}
+
+/*
+ * Call this directly from a tap.
+ * Browsers can block audio until the user interacts with the page.
+ */
+async function unlockAudio() {
+  log('Audio unlock requested. User activation: ' +
+      (navigator.userActivation?.isActive ?? 'unknown'));
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+    if (AudioContextClass) {
+      window.__claudeityAudioContext =
+        window.__claudeityAudioContext || new AudioContextClass();
+
+      const context = window.__claudeityAudioContext;
+
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+
+      log('AudioContext state: ' + context.state);
+    }
+
+    // Attempt silent playback during the user's tap.
+    const audio = new Audio(
+      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+    );
+
+    audio.playsInline = true;
+    audio.volume = 0.01;
+
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+
+    audioUnlocked = true;
+    $('audioHelp').textContent = 'Audio enabled for this page. Try sending a message.';
+    status('Audio enabled. Try a spoken reply.');
+
+    return true;
+  } catch (error) {
+    audioUnlocked = false;
+
+    log('Audio unlock failed: ' +
+        (error?.name || 'Error') + ' ' +
+        (error?.message || error));
+
+    status('Could not unlock audio: ' +
+           (error?.name || error?.message || 'tap again'));
+
+    return false;
+  }
+}
+
+function stopVoiceChat(message = 'Voice chat stopped.') {
+  voiceChatOn = false;
+  recognitionWanted = false;
+  isSpeaking = false;
+
+  try {
+    if (recognition) recognition.stop();
+  } catch (error) {
+    log('Stopping recognition: ' + error);
+  }
+
+  try {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+    }
+  } catch (error) {
+    log('Stopping audio: ' + error);
+  }
+
+  currentAudio = null;
+  $('voiceChat').textContent = '🎧 Start Voice Chat';
+  status(message);
+}
+
+function startListening() {
+  if (!voiceChatOn || !recognitionWanted || !recognition) return;
+
+  try {
+    recognition.start();
+  } catch (error) {
+    // Recognition may already be starting or active.
+    log('Recognition start: ' + (error?.message || error));
+  }
+}
+
+function setupRecognition() {
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    status('Continuous voice chat is not supported by this browser. Try the mic button or type.');
+    return false;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onresult = event => {
+    let finalText = '';
+    let heardStop = false;
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0].transcript.trim();
+
+      if (/\bstop\b/i.test(text)) heardStop = true;
+      if (event.results[i].isFinal) finalText += ' ' + text;
+    }
+
+    if (heardStop && voiceChatOn) {
+      stopVoiceChat('You said “stop.” Voice chat ended.');
+      return;
+    }
+
+    if (finalText.trim() && voiceChatOn && !isSpeaking && !busy) {
+      $('message').value = finalText.trim();
+      send();
+    }
+  };
+
+  recognition.onerror = event => {
+    log('Speech recognition error: ' + event.error);
+
+    if (voiceChatOn &&
+        event.error !== 'no-speech' &&
+        event.error !== 'aborted') {
+      status('Microphone issue: ' + event.error + '. Check microphone permission.');
+    }
+  };
+
+  recognition.onend = () => {
+    if (voiceChatOn && recognitionWanted) {
+      setTimeout(() => {
+        if (voiceChatOn && recognitionWanted) startListening();
+      }, 250);
+    }
+  };
+
+  return true;
+}
+
+/* Buttons */
+$('settingsToggle').onclick = () => {
+  $('settings').classList.toggle('hidden');
+};
+
+$('debugToggle').onclick = () => {
+  $('debugConsole').classList.toggle('hidden');
+  log('Debug console ' +
+      ($('debugConsole').classList.contains('hidden') ? 'closed' : 'opened'));
+};
+
+$('clearDebug').onclick = () => {
+  $('debugLog').textContent = 'Log cleared.';
+};
+
+$('enableAudio').onclick = unlockAudio;
+
+/*
+ * Retry the last generated audio.
+ * This button must be tapped by the user on iPhone.
+ */
+$('retryAudio').onclick = async () => {
+  if (!lastAudioUrl) {
+    status('No previous audio is available to retry yet.');
+    return;
+  }
+
+  await unlockAudio();
+
+  try {
+    const audio = new Audio(lastAudioUrl);
+    audio.playsInline = true;
+    currentAudio = audio;
+    isSpeaking = true;
+
+    audio.onended = () => {
+      isSpeaking = false;
+      log('Retry audio ended');
+    };
+
+    audio.onerror = () => {
+      isSpeaking = false;
+      log('Retry audio error: ' + (audio.error?.code || 'unknown'));
+    };
+
+    await audio.play();
+    status('Retrying last audio…');
+  } catch (error) {
+    isSpeaking = false;
+
+    log('Retry playback rejected: ' +
+        (error?.name || 'Error') + ' ' +
+        (error?.message || error));
+
+    status('Playback blocked again. Tap Enable Audio, then Retry last audio.');
+  }
+};
+
+$('voice').onclick = () => {
+  voiceOn = !voiceOn;
+  $('voice').textContent = voiceOn ? '🔊 Voice on' : '🔇 Voice off';
+
+  if (!voiceOn && currentAudio) {
+    currentAudio.pause();
+    isSpeaking = false;
+  }
+
+  log('Voice enabled: ' + voiceOn);
+};
+
+$('voiceChat').onclick = () => {
+  if (voiceChatOn) {
+    stopVoiceChat();
+    return;
+  }
+
+  if (!setupRecognition()) return;
+
+  const config = cfg();
+
+  if (!config.url || !config.token) {
+    $('settings').classList.remove('hidden');
+    status('Set up the backend first, then start Voice Chat.');
+    return;
+  }
+
+  voiceChatOn = true;
+  recognitionWanted = true;
+  voiceOn = true;
+
+  $('voice').textContent = '🔊 Voice on';
+  $('voiceChat').textContent = '⏹ Stop Voice Chat';
+
+  status('Voice chat is on. Speak naturally; say “stop” to end it.');
+  startListening();
+};
+
+$('connect').onclick = async () => {
+  const config = cfg();
+
+  if (!config.url || !config.token) {
+    status('Enter URL and token first.');
+    return;
+  }
+
+  try {
+    status('Testing connection…');
+
+    const response = await fetch(config.url + '/health');
+
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+
+    connected(true);
+    status('Backend reachable. Ready for Halloween. 🎃');
+  } catch (error) {
+    connected(false);
+    log('Connection test failed: ' + (error?.message || error));
+    status('Could not connect. Check URL, token, Colab and tunnel.');
+  }
+};
+
+/* Chat request and generated voice playback */
+async function send() {
+  if (busy) return;
+
+  const message = $('message').value.trim();
+  if (!message) return;
+
+  const config = cfg();
+
+  if (!config.url || !config.token) {
+    $('settings').classList.remove('hidden');
+    status('Set up the backend first.');
+    return;
+  }
+
+  $('message').value = '';
+
+  log('Sending chat request; voiceOn=' + voiceOn +
+      '; audioUnlocked=' + audioUnlocked);
+
+  add('user', message);
+
+  const answer = add('assistant', 'Thinking…');
+
+  busy = true;
+  $('send').disabled = true;
+  status('Qwen is thinking…');
+
+  try {
+    log('POST ' + config.url + '/chat');
+
+    const response = await fetch(config.url + '/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + config.token
+      },
+      body: JSON.stringify({
+        message,
+        speak: voiceOn
+      })
+    });
+
+    log('Chat HTTP status: ' + response.status);
+
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+
+    const data = await response.json();
+
+    log('Response keys: ' + Object.keys(data).join(', ') +
+        '; has audio=' + Boolean(data.audio_base64) +
+        '; tts_error=' + (data.tts_error || 'none'));
+
+    answer.textContent = data.reply || 'My artificial brain sneezed. Ask again?';
+
+    status(data.tts_error
+      ? 'Text ready; voice service unavailable.'
+      : 'Reply received.');
+
+    if (voiceOn && data.audio_base64) {
+      const bytes = Uint8Array.from(
+        atob(data.audio_base64),
+        character => character.charCodeAt(0)
+      );
+
+      lastAudioUrl = URL.createObjectURL(
+        new Blob([bytes], {type: data.audio_type || 'audio/mpeg'})
+      );
+
+      const audio = new Audio(lastAudioUrl);
+      audio.playsInline = true;
+
+      currentAudio = audio;
+      isSpeaking = true;
+
+      audio.onplay = () => log('Audio playback started');
+
+      audio.onended = () => {
+        log('Audio playback ended');
+
+        if (currentAudio === audio) currentAudio = null;
+        isSpeaking = false;
+
+        if (voiceChatOn) {
+          status('Listening… say “stop” to end voice chat.');
+        }
+      };
+
+      audio.onerror = () => {
+        isSpeaking = false;
+
+        log('Audio element error code: ' +
+            (audio.error?.code || 'unknown'));
+
+        if (currentAudio === audio) currentAudio = null;
+      };
+
+      try {
+        await audio.play();
+        audioUnlocked = true;
+        log('audio.play() resolved');
+      } catch (error) {
+        isSpeaking = false;
+
+        log('audio.play() rejected: ' +
+            (error?.name || 'Error') + ' ' +
+            (error?.message || error));
+
+        status('Safari blocked audio. Tap Enable Audio, then tap Retry last audio.');
+
+        $('audioHelp').textContent =
+          'Playback was blocked. Tap Enable Audio, then use Debug → Retry last audio.';
+      }
+    } else if (voiceChatOn) {
+      status('Listening… say “stop” to end voice chat.');
+    }
+  } catch (error) {
+    log('Chat request failed: ' +
+        (error?.name || 'Error') + ' ' +
+        (error?.message || error));
+
+    answer.textContent =
+      'Oops—my cloud brain lost connection. Check the hotspot and Colab runtime, then try again. 🎃';
+
+    status('Connection failed. Check hotspot / tunnel.');
+    connected(false);
+  } finally {
+    busy = false;
+    $('send').disabled = false;
+  }
+}
+
+$('send').onclick = send;
+
+$('message').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    send();
+  }
+});
+
+/* Global diagnostics */
+window.addEventListener('error', event => {
+  log('Window error: ' + (event.message || 'unknown'));
+});
+
+window.addEventListener('unhandledrejection', event => {
+  log('Unhandled rejection: ' +
+      (event.reason?.message || event.reason || 'unknown'));
+});
+
+/* One-shot microphone button */
+$('mic').onclick = () => {
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    status('Speech recognition is unavailable here. Type your question instead.');
+    return;
+  }
+
+  try {
+    const recognition = new SpeechRecognition();
+
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+
+    status('Listening…');
+
+    recognition.onresult = event => {
+      $('message').value = event.results[0][0].transcript;
+      status('Heard you. Tap Send.');
+    };
+
+    recognition.onerror = event => {
+      log('Speech recognition error: ' + (event.error || 'unknown'));
+      status('Mic unavailable; check browser permission or type instead.');
+    };
+
+    recognition.start();
+  } catch (error) {
+    log('Mic start failed: ' + (error?.message || error));
+    status('Could not start mic. Type instead.');
+  }
+};
+</script>
+</body>
+</html>
