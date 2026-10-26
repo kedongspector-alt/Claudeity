@@ -179,43 +179,57 @@ function cfg() {
   };
 }
 
-/* Attempt to unlock audio from a direct user tap. */
-async function unlockAudio() {
-  log('Audio unlock tapped.');
+let audioContext;
+let audioUnlocked = false;
 
+async function unlockAudio() {
   try {
+    // Unlock Web Audio
     const AudioContextClass =
       window.AudioContext || window.webkitAudioContext;
 
     if (AudioContextClass) {
-      window.__claudeityAudioContext =
-        window.__claudeityAudioContext ||
-        new AudioContextClass();
+      audioContext ??= new AudioContextClass();
 
-      const context = window.__claudeityAudioContext;
-
-      if (context.state === 'suspended') {
-        await context.resume();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
       }
 
-      log('AudioContext: ' + context.state);
+      const buffer = audioContext.createBuffer(1, 1, 22050);
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      source.start(0);
     }
 
-    audioUnlocked = true;
-    $('audioHelp').textContent =
-      'Audio setup attempted. Try a spoken reply.';
+    // Unlock the actual HTML audio element too
+    const player = document.getElementById("audioPlayer")
+      || new Audio();
 
-    status('Audio setup complete. Try a message.');
+    player.playsInline = true;
+    player.preload = "auto";
+
+    // Tiny silent WAV
+    const silentWav =
+      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+
+    player.src = silentWav;
+    player.muted = true;
+
+    await player.play();
+    player.pause();
+    player.currentTime = 0;
+    player.muted = false;
+
+    audioUnlocked = true;
+    console.log("✅ Audio unlocked");
+
     return true;
   } catch (error) {
-    log('Audio unlock error: ' +
-      (error.name || 'Error') + ': ' + error.message);
-
-    status('Audio setup failed. Try tapping Enable Audio again.');
+    console.error("❌ Audio unlock failed:", error);
     return false;
   }
 }
-
 /*
  * IMPORTANT:
  * Never start recognition while a response is playing
