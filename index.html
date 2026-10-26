@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#f7f4ee">
 <title>Claudeity</title>
 <style>
@@ -42,13 +42,81 @@ input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:
 .debug-actions{display:flex;gap:8px;flex-wrap:wrap}
 .audio-help{font-size:12px;color:var(--muted);padding:4px;line-height:1.4}
 @media(min-width:600px){.settings{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
+
+/* ---------- Costume mode ---------- */
+.spark{display:inline-block;color:var(--accent);transform-origin:50% 50%;animation:pulse 3s ease-in-out infinite}
+body[data-state="thinking"] .spark{animation:spin 1.1s linear infinite}
+body[data-state="speaking"] .spark{animation:talk .45s ease-in-out infinite alternate}
+@keyframes pulse{0%,100%{transform:scale(1) rotate(0)}50%{transform:scale(1.18) rotate(20deg)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes talk{from{transform:scale(.9)}to{transform:scale(1.25)}}
+.brand{cursor:pointer;user-select:none;-webkit-user-select:none}
+.hero-spark{display:none;font-size:110px;line-height:1;text-align:center;margin:10px 0 4px}
+#idleLine{transition:opacity .5s}
+
+body.costume header{padding:20px 22px}
+body.costume .brand{font-size:32px}
+body.costume .sub{font-size:15px}
+body.costume #connection{font-size:15px}
+body.costume .hero-spark{display:block}
+body.costume .intro{text-align:center;padding-top:8px}
+body.costume .intro h1{font-size:44px}
+body.costume .intro p{font-size:20px}
+body.costume .msg{font-size:22px;padding:18px 20px}
+body.costume .name{font-size:13px}
+body.costume textarea{font-size:20px}
+body.costume .btn{font-size:17px;padding:13px 18px}
+body.costume .status{font-size:15px}
+body.costume .cfg-only{display:none!important}
+.costume-only{display:none}
+body.costume .costume-only{display:inline-block}
+
+/* ---------- iPhone fit (12 Pro Max is 428 x 926) ---------- */
+html,body{overflow-x:clip}
+header{z-index:11;padding-top:calc(16px + env(safe-area-inset-top))}
+main{padding-bottom:var(--composer-h,180px)}
+.panel{max-height:calc(100dvh - 120px);overflow-y:auto}
+@media (max-width:500px){
+  header{padding:calc(10px + env(safe-area-inset-top)) 14px 10px;gap:10px}
+  header > div:last-child{font-size:13px;white-space:nowrap}
+  .brand{font-size:20px}
+  .sub{font-size:11px}
+  main{padding-left:12px;padding-right:12px}
+  .intro{padding:14px 4px 12px}
+  .intro h1{font-size:25px}
+  .intro p{font-size:15px}
+  .msg{font-size:16px;padding:12px 14px}
+  .composer{padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+  .panel{padding:6px;border-radius:18px}
+  textarea{min-height:40px;padding:8px}
+  /* One swipeable row of buttons instead of three wrapped rows */
+  .actions{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:2px 2px 4px}
+  .actions::-webkit-scrollbar{display:none}
+  .btn{flex:0 0 auto;padding:10px 12px;font-size:14px}
+  .round{width:42px;height:42px}
+  .status,.audio-help{padding:4px 4px 2px}
+
+  body.costume header{padding:calc(12px + env(safe-area-inset-top)) 16px 12px}
+  body.costume .brand{font-size:24px}
+  body.costume .sub{font-size:12px}
+  body.costume #connection{font-size:13px}
+  body.costume .hero-spark{font-size:84px;margin:4px 0 0}
+  body.costume .intro{padding:6px 4px 10px}
+  body.costume .intro h1{font-size:32px}
+  body.costume .intro p{font-size:18px;min-height:2.9em}
+  body.costume .msg{font-size:19px;padding:14px 16px}
+  body.costume textarea{font-size:18px}
+  body.costume .actions{flex-wrap:wrap;justify-content:center}
+  body.costume .btn{font-size:16px;padding:12px 16px}
+  body.costume .status{font-size:14px;text-align:center}
+}
 </style>
 </head>
 
 <body>
 <header>
   <div>
-    <div class="brand">✳ Claudeity</div>
+    <div class="brand" id="brand" title="Triple-tap for costume mode"><span class="spark">✳</span> Claudeity</div>
     <div class="sub">Halloween AI • powered by Qwen</div>
   </div>
   <div>
@@ -59,14 +127,12 @@ input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:
 
 <main>
   <section class="intro">
+    <div class="hero-spark"><span class="spark">✳</span></div>
     <h1>What’s on your mind?</h1>
-    <p>Talk naturally. Turn on Voice Chat and say “stop” whenever you want to end it.</p>
+    <p id="idleLine">Talk naturally. Turn on Voice Chat and say “stop” whenever you want to end it.</p>
   </section>
   <section id="chat" class="chat">
-    <div class="msg assistant">
-      <div class="name">Claudeity</div>
-      Hey, it’s Claudeity. Ask me anything. 🎃
-    </div>
+    <div class="msg assistant"><div class="name">Claudeity</div><div>Hey, it’s Claudeity. Ask me anything. 🎃</div></div>
   </section>
 </main>
 
@@ -78,16 +144,18 @@ input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:
       <button id="send" class="btn primary">Send ↗</button>
       <button id="mic" class="btn round" aria-label="Use microphone">🎙️</button>
       <button id="voice" class="btn">🔊 Voice on</button>
-      <button id="enableAudio" class="btn">🔓 Enable Audio</button>
-      <button id="debugToggle" class="btn">🐛 Debug</button>
+      <button id="enableAudio" class="btn cfg-only">🔓 Enable Audio</button>
+      <button id="debugToggle" class="btn cfg-only">🐛 Debug</button>
       <button id="voiceChat" class="btn">🎧 Start Voice Chat</button>
-      <button id="settingsToggle" class="btn">⚙ Setup</button>
+      <button id="settingsToggle" class="btn cfg-only">⚙ Setup</button>
+      <button id="costumeToggle" class="btn cfg-only">🎃 Costume mode</button>
+      <button id="normalToggle" class="btn costume-only">↩ Normal mode</button>
     </div>
 
     <div id="status" class="status">Connect your Colab backend in Setup.</div>
-    <div id="audioHelp" class="audio-help">On iPhone, tap “Enable Audio” once before trying spoken replies.</div>
+    <div id="audioHelp" class="audio-help cfg-only">On iPhone, tap “Enable Audio” once before trying spoken replies. Triple-tap the Claudeity name to leave costume mode.</div>
 
-    <div id="debugConsole" class="debug-console hidden">
+    <div id="debugConsole" class="debug-console hidden cfg-only">
       <strong>Claudeity debug console</strong>
       <div class="debug-actions">
         <button id="retryAudio" class="btn">▶ Retry last audio</button>
@@ -96,7 +164,7 @@ input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:
       <pre id="debugLog">Debug console ready.</pre>
     </div>
 
-    <div id="settings" class="settings hidden">
+    <div id="settings" class="settings hidden cfg-only">
       <div class="wide">
         <label for="url">Colab backend URL</label>
         <input id="url" type="url" placeholder="https://xxxx.trycloudflare.com" autocapitalize="off">
@@ -709,6 +777,87 @@ async function send() {
     }
   }
 }
+
+/* ---------- Costume mode ---------- */
+
+// Spark animation follows what Claudeity is doing.
+setInterval(() => {
+  const state = isSpeaking ? 'speaking' : busy ? 'thinking' : 'idle';
+  if (document.body.dataset.state !== state) document.body.dataset.state = state;
+}, 150);
+
+// Keep the iPad screen awake while the page is open (iPadOS 16.4+).
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+      wakeLock = await navigator.wakeLock.request('screen');
+      log('Screen wake lock on.');
+    }
+  } catch (error) {
+    log('Wake lock unavailable: ' + error.message);
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') keepAwake();
+});
+document.addEventListener('click', () => { if (!wakeLock) keepAwake(); }, {once: true});
+
+// Idle lines that rotate under the heading in costume mode.
+const idleLines = [
+  'Ask me anything. 🎃',
+  'Trick or treat? I can help with either.',
+  'Go ahead, talk to my chest. I’m listening.',
+  'Now accepting questions and candy.',
+  'I have opinions about candy corn.'
+];
+const defaultIdle = $('idleLine').textContent;
+let idleIndex = 0;
+setInterval(() => {
+  if (!document.body.classList.contains('costume')) return;
+  const line = $('idleLine');
+  line.style.opacity = 0;
+  setTimeout(() => {
+    idleIndex = (idleIndex + 1) % idleLines.length;
+    line.textContent = idleLines[idleIndex];
+    line.style.opacity = 1;
+  }, 500);
+}, 6000);
+
+function setCostume(on) {
+  document.body.classList.toggle('costume', on);
+  $('idleLine').textContent = on ? idleLines[0] : defaultIdle;
+  try { localStorage.setItem('claudeity-costume', on ? '1' : '0'); } catch (_) {}
+  log('Costume mode: ' + on);
+}
+
+$('costumeToggle').onclick = () => setCostume(true);
+$('normalToggle').onclick = () => setCostume(false);
+
+// Triple-tap the name to switch costume mode on or off.
+let taps = 0, tapTimer = null;
+$('brand').addEventListener('click', () => {
+  taps++;
+  clearTimeout(tapTimer);
+  tapTimer = setTimeout(() => { taps = 0; }, 600);
+  if (taps >= 3) {
+    taps = 0;
+    setCostume(!document.body.classList.contains('costume'));
+  }
+});
+
+try {
+  if (localStorage.getItem('claudeity-costume') === '1') setCostume(true);
+} catch (_) {}
+
+// Keep the last message clear of the composer, whatever its height.
+const composerEl = document.querySelector('.composer');
+function fitComposer() {
+  document.documentElement.style.setProperty('--composer-h', (composerEl.offsetHeight + 16) + 'px');
+}
+if ('ResizeObserver' in window) new ResizeObserver(fitComposer).observe(composerEl);
+window.addEventListener('resize', fitComposer);
+fitComposer();
 
 $('send').onclick = send;
 
