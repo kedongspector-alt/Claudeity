@@ -249,55 +249,206 @@ function cfg() {
 
 let audioContext;
 let audioUnlocked = false;
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 
-async function unlockAudio() {
+/*
+ * One shared audio element for every reply.
+ * iOS unlocks playback per element, so the element a tap unlocks
+ * must be the same one that later plays Claudeity's voice.
+ */
+function player() {
+  if (!currentAudio) {
+    currentAudio = new Audio();
+    currentAudio.playsInline = true;
+    currentAudio.setAttribute('playsinline', '');
+    currentAudio.preload = 'auto';
+  }
+  return currentAudio;
+}
+
+/*
+ * Must run synchronously inside a tap handler: no await before it,
+ * or iOS no longer treats it as coming from the tap.
+ */
+function unlockAudio() {
   try {
-    // Unlock Web Audio
-    const AudioContextClass =
-      window.AudioContext || window.webkitAudioContext;
-
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (AudioContextClass) {
       audioContext ??= new AudioContextClass();
-
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
-
-      const buffer = audioContext.createBuffer(1, 1, 22050);
+      if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
       const source = audioContext.createBufferSource();
-      source.buffer = buffer;
+      source.buffer = audioContext.createBuffer(1, 1, 22050);
       source.connect(audioContext.destination);
       source.start(0);
     }
 
-    // Unlock the actual HTML audio element too
-    const player = document.getElementById("audioPlayer")
-      || new Audio();
-
-    player.playsInline = true;
-    player.preload = "auto";
-
-    // Tiny silent WAV
-    const silentWav =
-      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-
-    player.src = silentWav;
-    player.muted = true;
-
-    await player.play();
-    player.pause();
-    player.currentTime = 0;
-    player.muted = false;
-
-    audioUnlocked = true;
-    console.log("✅ Audio unlocked");
-
-    return true;
+    const p = player();
+    p.muted = true;
+    p.src = SILENT_WAV;
+    const attempt = p.play();
+    if (attempt) {
+      attempt.then(() => {
+        p.pause();
+        p.muted = false;
+        audioUnlocked = true;
+        log('Audio unlocked.');
+        if (!voiceChatOn) status('Audio enabled.');
+      }).catch(error => {
+        p.muted = false;
+        log('Audio unlock failed: ' + error.message);
+      });
+    }
   } catch (error) {
-    console.error("❌ Audio unlock failed:", error);
-    return false;
+    log('Audio unlock error: ' + error.message);
   }
 }
+
+/* ---------- Speech recognition (rebuilt for iOS Safari) ---------- */
+
+const SpeechRecognitionClass =
+  window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const SILENCE_MS = 1300;      // pause length that counts as "done talking"
+let recActive = false;        // true between onstart and onend
+let heard = '';               // transcript of what is being said right now
+let silenceTimer = null;
+let startWatchdog = null;
+let needsTap = false;         // iOS refused an automatic restart
+let failStreak = 0;           // restarts in a row that heard nothing
+
+function setVoiceButton() {
+  const button = $('voiceChat');
+  button.textContent = !voiceChatOn
+    ? '🎧 Start Voice Chat'
+    : needsTap ? '🎙️ Tap to talk' : '⏹ Stop Voice Chat';
+  button.classList.toggle('primary', voiceChatOn && needsTap);
+}
+
+function askForTap(reason) {
+  needsTap = true;
+  setVoiceButton();
+  log('Waiting for a tap: ' + reason);
+  status('Tap “🎙️ Tap to talk” to keep listening.');
+}
+
+function micErrorMessage(code) {
+  switch (code) {
+    case 'not-allowed':
+      return 'Microphone blocked. Allow it in Settings › Apps › Safari › Microphone, then reload.';
+    case 'service-not-allowed':
+      return 'Speech recognition is off. Turn on Siri (Settings › Siri) and Dictation (Settings › General › Keyboard).';
+    case 'audio-capture':
+      return 'No microphone available. Another app may be using it.';
+    case 'network':
+      return 'Speech recognition needs internet. Check your connection.';
+    default:
+      return 'Microphone error: ' + code;
+  }
+}
+
+function isStopCommand(text) {
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, '').trim().split(/\s+/);
+  return words.length <= 3 && words.includes('stop');
+}
+
+function makeRecognition() {
+  const rec = new SpeechRecognitionClass();
+  rec.lang = 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => {
+    if (rec !== recognition) return;
+    recActive = true;
+    clearTimeout(startWatchdog);
+    needsTap = false;
+    setVoiceButton();
+    log('Recognition is active.');
+    if (voiceChatOn && !busy && !isSpeaking) {
+      status('Listening… say “stop” to end voice chat.');
+    }
+  };
+
+  rec.onresult = event => {
+    if (rec !== recognition || !voiceChatOn || listeningPaused || busy || isSpeaking) return;
+
+    // iOS often never marks results final in continuous mode,
+    // so read everything heard and end the turn on a pause instead.
+    let text = '';
+    let allFinal = true;
+    for (let i = 0; i < event.results.length; i++) {
+      text += event.results[i][0].transcript;
+      if (!event.results[i].isFinal) allFinal = false;
+    }
+    text = text.trim();
+    if (!text) return;
+
+    heard = text;
+    failStreak = 0;
+    status('Heard: “' + text + '”');
+
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(finishUtterance, allFinal ? 500 : SILENCE_MS);
+  };
+
+  rec.onerror = event => {
+    if (rec !== recognition) return;
+    log('Speech recognition error: ' + event.error);
+    if (event.error === 'no-speech' || event.error === 'aborted') return;
+
+    if (event.error === 'not-allowed' && audioUnlocked && voiceChatOn) {
+      // Usually iOS refusing a restart that wasn't triggered by a tap.
+      askForTap('restart not allowed without a tap');
+      return;
+    }
+    stopVoiceChat(micErrorMessage(event.error));
+  };
+
+  rec.onend = () => {
+    if (rec !== recognition) return;
+    recActive = false;
+    log('Recognition ended.');
+
+    if (heard && voiceChatOn && !listeningPaused) {
+      finishUtterance();
+      return;
+    }
+    if (voiceChatOn && !listeningPaused && !busy && !isSpeaking && !needsTap) {
+      failStreak++;
+      if (failStreak >= 6) {
+        askForTap('microphone keeps stopping');
+      } else {
+        scheduleListen(400);
+      }
+    }
+  };
+
+  return rec;
+}
+
+function finishUtterance() {
+  clearTimeout(silenceTimer);
+  const text = heard.trim();
+  heard = '';
+  if (!text || !voiceChatOn) return;
+
+  if (isStopCommand(text)) {
+    stopVoiceChat('You said “stop.” Voice chat ended.');
+    return;
+  }
+
+  log('Recognized: ' + text);
+
+  // Release the microphone BEFORE the request so
+  // Safari can switch the audio session to playback.
+  pauseListening('waiting for Claudeity');
+
+  $('message').value = text;
+  send();
+}
+
 /*
  * IMPORTANT:
  * Never start recognition while a response is playing
@@ -305,33 +456,51 @@ async function unlockAudio() {
  */
 function startListening() {
   clearTimeout(listenTimer);
+  if (!voiceChatOn || listeningPaused || busy || isSpeaking || recActive) return;
 
-  if (!voiceChatOn ||
-      listeningPaused ||
-      busy ||
-      isSpeaking ||
-      !recognition) {
-    return;
+  // A fresh recognizer per turn is far more reliable on iOS
+  // than restarting the same object.
+  if (recognition) {
+    const old = recognition;
+    recognition = null;
+    try { old.abort(); } catch (_) {}
   }
+  recognition = makeRecognition();
+  heard = '';
 
   try {
     recognition.start();
     log('Recognition start requested.');
   } catch (error) {
-    log('Recognition start: ' + error.message);
+    log('Recognition start failed: ' + error.message);
+    askForTap('start threw an error');
+    return;
   }
+
+  clearTimeout(startWatchdog);
+  startWatchdog = setTimeout(() => {
+    if (!recActive && voiceChatOn && !listeningPaused && !busy && !isSpeaking) {
+      askForTap('microphone did not start');
+    }
+  }, 2500);
+}
+
+function scheduleListen(ms) {
+  clearTimeout(listenTimer);
+  listenTimer = setTimeout(startListening, ms);
 }
 
 function pauseListening(reason) {
   listeningPaused = true;
   clearTimeout(listenTimer);
+  clearTimeout(silenceTimer);
+  clearTimeout(startWatchdog);
 
   if (recognition) {
-    try {
-      recognition.stop();
-    } catch (error) {
-      log('Recognition stop: ' + error.message);
-    }
+    const old = recognition;
+    recognition = null;
+    recActive = false;
+    try { old.abort(); } catch (error) { log('Recognition abort: ' + error.message); }
   }
 
   log('Microphone paused: ' + reason);
@@ -339,124 +508,25 @@ function pauseListening(reason) {
 
 function resumeListening(reason) {
   if (!voiceChatOn) return;
-
   listeningPaused = false;
+  failStreak = 0;
   log('Microphone resume requested: ' + reason);
-
-  listenTimer = setTimeout(() => {
-    startListening();
-  }, 500);
+  scheduleListen(600);
 }
 
 function stopVoiceChat(message = 'Voice chat stopped.') {
   voiceChatOn = false;
-  listeningPaused = true;
-  clearTimeout(listenTimer);
-
-  if (recognition) {
-    try {
-      recognition.abort();
-    } catch (error) {
-      log('Recognition abort: ' + error.message);
-    }
-  }
+  needsTap = false;
+  pauseListening('voice chat stopped');
 
   if (currentAudio) {
     currentAudio.pause();
-    currentAudio.currentTime = 0;
+    try { currentAudio.currentTime = 0; } catch (_) {}
   }
-
   isSpeaking = false;
-  currentAudio = null;
 
-  $('voiceChat').textContent = '🎧 Start Voice Chat';
+  setVoiceButton();
   status(message);
-}
-
-function setupRecognition() {
-  const SpeechRecognition =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    status('Speech recognition is not supported in this browser.');
-    return false;
-  }
-
-  if (recognition) {
-    try {
-      recognition.abort();
-    } catch (_) {}
-  }
-
-  recognition = new SpeechRecognition();
-  recognition.lang = 'en-US';
-  recognition.continuous = true;
-  recognition.interimResults = true;
-
-  recognition.onstart = () => {
-    log('Recognition is active.');
-    if (voiceChatOn && !isSpeaking && !busy) {
-      status('Listening… say “stop” to end voice chat.');
-    }
-  };
-
-  recognition.onresult = event => {
-    if (!voiceChatOn || listeningPaused || busy || isSpeaking) {
-      return;
-    }
-
-    let finalText = '';
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript.trim();
-
-      if (!event.results[i].isFinal) continue;
-
-      if (/\bstop\b/i.test(transcript)) {
-        stopVoiceChat('You said “stop.” Voice chat ended.');
-        return;
-      }
-
-      finalText += ' ' + transcript;
-    }
-
-    finalText = finalText.trim();
-    if (!finalText) return;
-
-    log('Recognized: ' + finalText);
-
-    // Stop listening BEFORE sending the request.
-    // Safari gets the audio session back for playback.
-    pauseListening('waiting for Claudeity');
-
-    $('message').value = finalText;
-    send();
-  };
-
-  recognition.onerror = event => {
-    log('Speech recognition error: ' + event.error);
-
-    if (voiceChatOn &&
-        event.error !== 'no-speech' &&
-        event.error !== 'aborted') {
-      status('Microphone error: ' + event.error);
-    }
-  };
-
-  recognition.onend = () => {
-    log('Recognition ended.');
-
-    // Do not immediately restart while Claudeity is talking.
-    if (voiceChatOn &&
-        !listeningPaused &&
-        !busy &&
-        !isSpeaking) {
-      listenTimer = setTimeout(startListening, 500);
-    }
-  };
-
-  return true;
 }
 
 /* Settings and debug controls */
@@ -503,11 +573,8 @@ $('retryAudio').onclick = async () => {
   }
 
   try {
-    if (!currentAudio) {
-      currentAudio = new Audio();
-      currentAudio.playsInline = true;
-    }
-
+    player();
+    currentAudio.muted = false;
     currentAudio.src = lastAudioUrl;
     currentAudio.onended = () => {
       isSpeaking = false;
@@ -545,34 +612,53 @@ $('retryAudio').onclick = async () => {
   }
 };
 
-/* Start or stop continuous voice chat. */
-$('voiceChat').onclick = async () => {
+/* Start or stop continuous voice chat.
+ * Everything here runs synchronously so iOS counts it as part of the tap. */
+$('voiceChat').onclick = () => {
+  // iOS refused an automatic restart: this tap restarts the mic.
+  if (voiceChatOn && needsTap) {
+    needsTap = false;
+    failStreak = 0;
+    listeningPaused = false;
+    setVoiceButton();
+    startListening();
+    return;
+  }
+
   if (voiceChatOn) {
     stopVoiceChat();
     return;
   }
 
-  const config = cfg();
+  if (!SpeechRecognitionClass) {
+    status('Speech recognition isn’t supported here. Open the page in Safari or Chrome, or type instead.');
+    return;
+  }
 
+  if (navigator.standalone) {
+    log('Running as a Home Screen app; speech recognition may be unavailable.');
+  }
+
+  const config = cfg();
   if (!config.url || !config.token) {
     $('settings').classList.remove('hidden');
     status('Set up the backend first.');
     return;
   }
 
-  if (!setupRecognition()) return;
-
   voiceChatOn = true;
   listeningPaused = false;
+  needsTap = false;
+  failStreak = 0;
   voiceOn = true;
   $('voice').textContent = '🔊 Voice on';
-  $('voiceChat').textContent = '⏹ Stop Voice Chat';
+  setVoiceButton();
+  status('Starting the microphone…');
 
-  // Attempt audio initialization from this user interaction.
-  await unlockAudio();
+  // Unlock playback inside the same tap, without waiting on it.
+  if (!audioUnlocked) unlockAudio();
 
   startListening();
-  status('Voice chat on. Speak naturally; say “stop” to end it.');
 };
 
 $('connect').onclick = async () => {
@@ -691,12 +777,8 @@ async function send() {
 
       // Reuse a single audio element instead of creating
       // a new audio session for every response.
-      if (!currentAudio) {
-        currentAudio = new Audio();
-        currentAudio.playsInline = true;
-      }
-
-      const audio = currentAudio;
+      const audio = player();
+      audio.muted = false;
       audio.onended = null;
       audio.onerror = null;
       audio.src = lastAudioUrl;
@@ -889,6 +971,9 @@ $('mic').onclick = () => {
     return;
   }
 
+  // Two recognizers at once break each other on iOS.
+  if (voiceChatOn) stopVoiceChat('Voice chat paused for the one-shot mic.');
+
   try {
     const micRecognition = new SpeechRecognition();
     micRecognition.lang = 'en-US';
@@ -903,7 +988,11 @@ $('mic').onclick = () => {
 
     micRecognition.onerror = event => {
       log('Mic error: ' + event.error);
-      status('Microphone issue: ' + event.error);
+      if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        status(micErrorMessage(event.error));
+      } else {
+        status('Didn’t catch that. Tap 🎙️ to try again.');
+      }
     };
 
     micRecognition.start();
