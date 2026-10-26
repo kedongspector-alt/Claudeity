@@ -116,6 +116,7 @@ input,select{width:100%;border:1px solid var(--line);border-radius:10px;padding:
   </div>
 </div>
 
+
 <script>
 const $ = id => document.getElementById(id);
 
@@ -123,21 +124,20 @@ let voiceOn = true;
 let busy = false;
 let voiceChatOn = false;
 let recognition = null;
-let recognitionWanted = false;
+let listeningPaused = false;
 let currentAudio = null;
 let lastAudioUrl = null;
 let isSpeaking = false;
 let audioUnlocked = false;
+let listenTimer = null;
 
 function log(message) {
   const line = `[${new Date().toLocaleTimeString()}] ${String(message)}`;
   const box = $('debugLog');
-
   if (box) {
     box.textContent += (box.textContent ? '\n' : '') + line;
     box.scrollTop = box.scrollHeight;
   }
-
   console.log('[Claudeity]', message);
 }
 
@@ -164,7 +164,10 @@ function add(role, text) {
 
   element.append(name, body);
   $('chat').append(element);
-  window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});
+  window.scrollTo({
+    top: document.body.scrollHeight,
+    behavior: 'smooth'
+  });
 
   return body;
 }
@@ -176,20 +179,18 @@ function cfg() {
   };
 }
 
-/*
- * Call this directly from a tap.
- * Browsers can block audio until the user interacts with the page.
- */
+/* Attempt to unlock audio from a direct user tap. */
 async function unlockAudio() {
-  log('Audio unlock requested. User activation: ' +
-      (navigator.userActivation?.isActive ?? 'unknown'));
+  log('Audio unlock tapped.');
 
   try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
 
     if (AudioContextClass) {
       window.__claudeityAudioContext =
-        window.__claudeityAudioContext || new AudioContextClass();
+        window.__claudeityAudioContext ||
+        new AudioContextClass();
 
       const context = window.__claudeityAudioContext;
 
@@ -197,83 +198,113 @@ async function unlockAudio() {
         await context.resume();
       }
 
-      log('AudioContext state: ' + context.state);
+      log('AudioContext: ' + context.state);
     }
 
-    // Attempt silent playback during the user's tap.
-    const audio = new Audio(
-      'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
-    );
-
-    audio.playsInline = true;
-    audio.volume = 0.01;
-
-    await audio.play();
-    audio.pause();
-    audio.currentTime = 0;
-
     audioUnlocked = true;
-    $('audioHelp').textContent = 'Audio enabled for this page. Try sending a message.';
-    status('Audio enabled. Try a spoken reply.');
+    $('audioHelp').textContent =
+      'Audio setup attempted. Try a spoken reply.';
 
+    status('Audio setup complete. Try a message.');
     return true;
   } catch (error) {
-    audioUnlocked = false;
+    log('Audio unlock error: ' +
+      (error.name || 'Error') + ': ' + error.message);
 
-    log('Audio unlock failed: ' +
-        (error?.name || 'Error') + ' ' +
-        (error?.message || error));
-
-    status('Could not unlock audio: ' +
-           (error?.name || error?.message || 'tap again'));
-
+    status('Audio setup failed. Try tapping Enable Audio again.');
     return false;
   }
+}
+
+/*
+ * IMPORTANT:
+ * Never start recognition while a response is playing
+ * or while a chat request is in progress.
+ */
+function startListening() {
+  clearTimeout(listenTimer);
+
+  if (!voiceChatOn ||
+      listeningPaused ||
+      busy ||
+      isSpeaking ||
+      !recognition) {
+    return;
+  }
+
+  try {
+    recognition.start();
+    log('Recognition start requested.');
+  } catch (error) {
+    log('Recognition start: ' + error.message);
+  }
+}
+
+function pauseListening(reason) {
+  listeningPaused = true;
+  clearTimeout(listenTimer);
+
+  if (recognition) {
+    try {
+      recognition.stop();
+    } catch (error) {
+      log('Recognition stop: ' + error.message);
+    }
+  }
+
+  log('Microphone paused: ' + reason);
+}
+
+function resumeListening(reason) {
+  if (!voiceChatOn) return;
+
+  listeningPaused = false;
+  log('Microphone resume requested: ' + reason);
+
+  listenTimer = setTimeout(() => {
+    startListening();
+  }, 500);
 }
 
 function stopVoiceChat(message = 'Voice chat stopped.') {
   voiceChatOn = false;
-  recognitionWanted = false;
-  isSpeaking = false;
+  listeningPaused = true;
+  clearTimeout(listenTimer);
 
-  try {
-    if (recognition) recognition.stop();
-  } catch (error) {
-    log('Stopping recognition: ' + error);
-  }
-
-  try {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
+  if (recognition) {
+    try {
+      recognition.abort();
+    } catch (error) {
+      log('Recognition abort: ' + error.message);
     }
-  } catch (error) {
-    log('Stopping audio: ' + error);
   }
 
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
+
+  isSpeaking = false;
   currentAudio = null;
+
   $('voiceChat').textContent = '🎧 Start Voice Chat';
   status(message);
 }
 
-function startListening() {
-  if (!voiceChatOn || !recognitionWanted || !recognition) return;
-
-  try {
-    recognition.start();
-  } catch (error) {
-    // Recognition may already be starting or active.
-    log('Recognition start: ' + (error?.message || error));
-  }
-}
-
 function setupRecognition() {
   const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
-    status('Continuous voice chat is not supported by this browser. Try the mic button or type.');
+    status('Speech recognition is not supported in this browser.');
     return false;
+  }
+
+  if (recognition) {
+    try {
+      recognition.abort();
+    } catch (_) {}
   }
 
   recognition = new SpeechRecognition();
@@ -281,26 +312,44 @@ function setupRecognition() {
   recognition.continuous = true;
   recognition.interimResults = true;
 
-  recognition.onresult = event => {
-    let finalText = '';
-    let heardStop = false;
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript.trim();
-
-      if (/\bstop\b/i.test(text)) heardStop = true;
-      if (event.results[i].isFinal) finalText += ' ' + text;
+  recognition.onstart = () => {
+    log('Recognition is active.');
+    if (voiceChatOn && !isSpeaking && !busy) {
+      status('Listening… say “stop” to end voice chat.');
     }
+  };
 
-    if (heardStop && voiceChatOn) {
-      stopVoiceChat('You said “stop.” Voice chat ended.');
+  recognition.onresult = event => {
+    if (!voiceChatOn || listeningPaused || busy || isSpeaking) {
       return;
     }
 
-    if (finalText.trim() && voiceChatOn && !isSpeaking && !busy) {
-      $('message').value = finalText.trim();
-      send();
+    let finalText = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript.trim();
+
+      if (!event.results[i].isFinal) continue;
+
+      if (/\bstop\b/i.test(transcript)) {
+        stopVoiceChat('You said “stop.” Voice chat ended.');
+        return;
+      }
+
+      finalText += ' ' + transcript;
     }
+
+    finalText = finalText.trim();
+    if (!finalText) return;
+
+    log('Recognized: ' + finalText);
+
+    // Stop listening BEFORE sending the request.
+    // Safari gets the audio session back for playback.
+    pauseListening('waiting for Claudeity');
+
+    $('message').value = finalText;
+    send();
   };
 
   recognition.onerror = event => {
@@ -309,30 +358,33 @@ function setupRecognition() {
     if (voiceChatOn &&
         event.error !== 'no-speech' &&
         event.error !== 'aborted') {
-      status('Microphone issue: ' + event.error + '. Check microphone permission.');
+      status('Microphone error: ' + event.error);
     }
   };
 
   recognition.onend = () => {
-    if (voiceChatOn && recognitionWanted) {
-      setTimeout(() => {
-        if (voiceChatOn && recognitionWanted) startListening();
-      }, 250);
+    log('Recognition ended.');
+
+    // Do not immediately restart while Claudeity is talking.
+    if (voiceChatOn &&
+        !listeningPaused &&
+        !busy &&
+        !isSpeaking) {
+      listenTimer = setTimeout(startListening, 500);
     }
   };
 
   return true;
 }
 
-/* Buttons */
+/* Settings and debug controls */
 $('settingsToggle').onclick = () => {
   $('settings').classList.toggle('hidden');
 };
 
 $('debugToggle').onclick = () => {
   $('debugConsole').classList.toggle('hidden');
-  log('Debug console ' +
-      ($('debugConsole').classList.contains('hidden') ? 'closed' : 'opened'));
+  log('Debug console toggled.');
 };
 
 $('clearDebug').onclick = () => {
@@ -341,116 +393,82 @@ $('clearDebug').onclick = () => {
 
 $('enableAudio').onclick = unlockAudio;
 
-/*
- * Retry the last generated audio.
- * This button must be tapped by the user on iPhone.
- */
-$('retryAudio').onclick = async () => {
-  if (!lastAudioUrl) {
-    status('No previous audio is available to retry yet.');
-    return;
-  }
-
-  await unlockAudio();
-
-  try {
-    const audio = new Audio(lastAudioUrl);
-    audio.playsInline = true;
-    currentAudio = audio;
-    isSpeaking = true;
-
-    audio.onended = () => {
-      isSpeaking = false;
-      log('Retry audio ended');
-    };
-
-    audio.onerror = () => {
-      isSpeaking = false;
-      log('Retry audio error: ' + (audio.error?.code || 'unknown'));
-    };
-
-    await audio.play();
-    status('Retrying last audio…');
-  } catch (error) {
-    isSpeaking = false;
-
-    log('Retry playback rejected: ' +
-        (error?.name || 'Error') + ' ' +
-        (error?.message || error));
-
-    status('Playback blocked again. Tap Enable Audio, then Retry last audio.');
-  }
-};
-
 $('voice').onclick = () => {
   voiceOn = !voiceOn;
   $('voice').textContent = voiceOn ? '🔊 Voice on' : '🔇 Voice off';
+  log('Voice enabled: ' + voiceOn);
 
   if (!voiceOn && currentAudio) {
     currentAudio.pause();
     isSpeaking = false;
-  }
 
-  log('Voice enabled: ' + voiceOn);
+    if (voiceChatOn) {
+      resumeListening('voice playback disabled');
+    }
+  }
 };
 
-$('voiceChat').onclick = () => {
+/* Replay the latest generated audio using a direct tap. */
+$('retryAudio').onclick = async () => {
+  if (!lastAudioUrl) {
+    status('No generated audio available to retry yet.');
+    return;
+  }
+
+  // Avoid microphone/audio session conflicts during replay.
+  if (voiceChatOn) {
+    pauseListening('manual audio replay');
+  }
+
+  try {
+    if (!currentAudio) {
+      currentAudio = new Audio();
+      currentAudio.playsInline = true;
+    }
+
+    currentAudio.src = lastAudioUrl;
+    currentAudio.onended = () => {
+      isSpeaking = false;
+      log('Replay finished.');
+
+      if (voiceChatOn) {
+        resumeListening('replay finished');
+      }
+    };
+
+    currentAudio.onerror = () => {
+      isSpeaking = false;
+      log('Replay audio error: ' +
+        (currentAudio.error?.code || 'unknown'));
+
+      if (voiceChatOn) {
+        resumeListening('replay error');
+      }
+    };
+
+    isSpeaking = true;
+    await currentAudio.play();
+    status('Playing last audio…');
+  } catch (error) {
+    isSpeaking = false;
+
+    log('Replay rejected: ' +
+      (error.name || 'Error') + ': ' + error.message);
+
+    status('Replay blocked. Check the debug console.');
+
+    if (voiceChatOn) {
+      resumeListening('replay blocked');
+    }
+  }
+};
+
+/* Start or stop continuous voice chat. */
+$('voiceChat').onclick = async () => {
   if (voiceChatOn) {
     stopVoiceChat();
     return;
   }
-
-  if (!setupRecognition()) return;
-
-  const config = cfg();
-
-  if (!config.url || !config.token) {
-    $('settings').classList.remove('hidden');
-    status('Set up the backend first, then start Voice Chat.');
-    return;
-  }
-
-  voiceChatOn = true;
-  recognitionWanted = true;
-  voiceOn = true;
-
-  $('voice').textContent = '🔊 Voice on';
-  $('voiceChat').textContent = '⏹ Stop Voice Chat';
-
-  status('Voice chat is on. Speak naturally; say “stop” to end it.');
-  startListening();
-};
-
-$('connect').onclick = async () => {
-  const config = cfg();
-
-  if (!config.url || !config.token) {
-    status('Enter URL and token first.');
-    return;
-  }
-
-  try {
-    status('Testing connection…');
-
-    const response = await fetch(config.url + '/health');
-
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-
-    connected(true);
-    status('Backend reachable. Ready for Halloween. 🎃');
-  } catch (error) {
-    connected(false);
-    log('Connection test failed: ' + (error?.message || error));
-    status('Could not connect. Check URL, token, Colab and tunnel.');
-  }
-};
-
-/* Chat request and generated voice playback */
-async function send() {
-  if (busy) return;
-
-  const message = $('message').value.trim();
-  if (!message) return;
 
   const config = cfg();
 
@@ -460,22 +478,89 @@ async function send() {
     return;
   }
 
+  if (!setupRecognition()) return;
+
+  voiceChatOn = true;
+  listeningPaused = false;
+  voiceOn = true;
+  $('voice').textContent = '🔊 Voice on';
+  $('voiceChat').textContent = '⏹ Stop Voice Chat';
+
+  // Attempt audio initialization from this user interaction.
+  await unlockAudio();
+
+  startListening();
+  status('Voice chat on. Speak naturally; say “stop” to end it.');
+};
+
+$('connect').onclick = async () => {
+  const config = cfg();
+
+  if (!config.url || !config.token) {
+    status('Enter the backend URL and token first.');
+    return;
+  }
+
+  try {
+    status('Testing backend connection…');
+
+    const response = await fetch(config.url + '/health');
+
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status);
+    }
+
+    connected(true);
+    status('Backend reachable. Ready for Halloween. 🎃');
+  } catch (error) {
+    connected(false);
+    log('Connection test failed: ' + error.message);
+    status('Connection failed. Check your Colab URL and runtime.');
+  }
+};
+
+/* Chat request and voice playback. */
+async function send() {
+  if (busy) return;
+
+  const message = $('message').value.trim();
+  if (!message) {
+    if (voiceChatOn) {
+      resumeListening('empty message');
+    }
+    return;
+  }
+
+  const config = cfg();
+
+  if (!config.url || !config.token) {
+    $('settings').classList.remove('hidden');
+    status('Set up the backend first.');
+
+    if (voiceChatOn) {
+      resumeListening('backend not configured');
+    }
+    return;
+  }
+
+  // Also pause recognition if the user taps Send manually
+  // while continuous voice chat is active.
+  if (voiceChatOn && !listeningPaused) {
+    pauseListening('chat request');
+  }
+
   $('message').value = '';
-
-  log('Sending chat request; voiceOn=' + voiceOn +
-      '; audioUnlocked=' + audioUnlocked);
-
   add('user', message);
 
   const answer = add('assistant', 'Thinking…');
 
   busy = true;
   $('send').disabled = true;
+
   status('Qwen is thinking…');
+  log('POST /chat; voiceOn=' + voiceOn);
 
   try {
-    log('POST ' + config.url + '/chat');
-
     const response = await fetch(config.url + '/chat', {
       method: 'POST',
       headers: {
@@ -490,19 +575,18 @@ async function send() {
 
     log('Chat HTTP status: ' + response.status);
 
-    if (!response.ok) throw new Error('HTTP ' + response.status);
+    if (!response.ok) {
+      throw new Error('HTTP ' + response.status);
+    }
 
     const data = await response.json();
 
-    log('Response keys: ' + Object.keys(data).join(', ') +
-        '; has audio=' + Boolean(data.audio_base64) +
-        '; tts_error=' + (data.tts_error || 'none'));
+    log('Response received; audio=' +
+      Boolean(data.audio_base64) +
+      '; tts_error=' + (data.tts_error || 'none'));
 
-    answer.textContent = data.reply || 'My artificial brain sneezed. Ask again?';
-
-    status(data.tts_error
-      ? 'Text ready; voice service unavailable.'
-      : 'Reply received.');
+    answer.textContent =
+      data.reply || 'My artificial brain sneezed. Ask again?';
 
     if (voiceOn && data.audio_base64) {
       const bytes = Uint8Array.from(
@@ -510,70 +594,105 @@ async function send() {
         character => character.charCodeAt(0)
       );
 
-      lastAudioUrl = URL.createObjectURL(
-        new Blob([bytes], {type: data.audio_type || 'audio/mpeg'})
+      const blob = new Blob(
+        [bytes],
+        {type: data.audio_type || 'audio/mpeg'}
       );
 
-      const audio = new Audio(lastAudioUrl);
-      audio.playsInline = true;
+      const newAudioUrl = URL.createObjectURL(blob);
 
-      currentAudio = audio;
-      isSpeaking = true;
+      if (lastAudioUrl && lastAudioUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(lastAudioUrl);
+      }
 
-      audio.onplay = () => log('Audio playback started');
+      lastAudioUrl = newAudioUrl;
+
+      // Reuse a single audio element instead of creating
+      // a new audio session for every response.
+      if (!currentAudio) {
+        currentAudio = new Audio();
+        currentAudio.playsInline = true;
+      }
+
+      const audio = currentAudio;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.src = lastAudioUrl;
+      audio.load();
+
+      audio.onplay = () => {
+        log('Audio playback started.');
+      };
 
       audio.onended = () => {
-        log('Audio playback ended');
-
-        if (currentAudio === audio) currentAudio = null;
+        log('Audio playback ended.');
         isSpeaking = false;
 
         if (voiceChatOn) {
-          status('Listening… say “stop” to end voice chat.');
+          resumeListening('Claudeity finished speaking');
+        } else {
+          status('Reply finished.');
         }
       };
 
       audio.onerror = () => {
         isSpeaking = false;
+        log('Audio element error: ' +
+          (audio.error?.code || 'unknown'));
 
-        log('Audio element error code: ' +
-            (audio.error?.code || 'unknown'));
+        status('Audio playback failed. Open Debug for details.');
 
-        if (currentAudio === audio) currentAudio = null;
+        if (voiceChatOn) {
+          resumeListening('audio playback error');
+        }
       };
+
+      // Recognition was stopped before this point.
+      // Now Safari can attempt to play the generated response.
+      isSpeaking = true;
+      status('Claudeity is speaking…');
 
       try {
         await audio.play();
         audioUnlocked = true;
-        log('audio.play() resolved');
+        log('audio.play() accepted.');
       } catch (error) {
         isSpeaking = false;
 
         log('audio.play() rejected: ' +
-            (error?.name || 'Error') + ' ' +
-            (error?.message || error));
+          (error.name || 'Error') + ': ' + error.message);
 
-        status('Safari blocked audio. Tap Enable Audio, then tap Retry last audio.');
+        status('Playback blocked. Tap Retry last audio in Debug.');
 
-        $('audioHelp').textContent =
-          'Playback was blocked. Tap Enable Audio, then use Debug → Retry last audio.';
+        if (voiceChatOn) {
+          resumeListening('playback rejected');
+        }
       }
-    } else if (voiceChatOn) {
-      status('Listening… say “stop” to end voice chat.');
+    } else {
+      if (data.tts_error) {
+        log('TTS error: ' + data.tts_error);
+        status('Text received, but the voice service reported an error.');
+      } else {
+        status('Text reply received; no audio was returned.');
+      }
     }
   } catch (error) {
     log('Chat request failed: ' +
-        (error?.name || 'Error') + ' ' +
-        (error?.message || error));
+      (error.name || 'Error') + ': ' + error.message);
 
     answer.textContent =
-      'Oops—my cloud brain lost connection. Check the hotspot and Colab runtime, then try again. 🎃';
+      'Oops—my cloud brain lost connection. Check Colab and try again. 🎃';
 
-    status('Connection failed. Check hotspot / tunnel.');
+    status('Request failed. Check Debug for details.');
     connected(false);
   } finally {
     busy = false;
     $('send').disabled = false;
+
+    // Resume listening only if there is no audio currently playing.
+    if (voiceChatOn && !isSpeaking) {
+      resumeListening('request finished without active playback');
+    }
   }
 }
 
@@ -593,43 +712,44 @@ window.addEventListener('error', event => {
 
 window.addEventListener('unhandledrejection', event => {
   log('Unhandled rejection: ' +
-      (event.reason?.message || event.reason || 'unknown'));
+    (event.reason?.message || event.reason || 'unknown'));
 });
 
-/* One-shot microphone button */
+/* One-shot microphone button, independent of Voice Chat. */
 $('mic').onclick = () => {
   const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
-    status('Speech recognition is unavailable here. Type your question instead.');
+    status('Speech recognition unavailable. Type your message instead.');
     return;
   }
 
   try {
-    const recognition = new SpeechRecognition();
-
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
+    const micRecognition = new SpeechRecognition();
+    micRecognition.lang = 'en-US';
+    micRecognition.interimResults = false;
 
     status('Listening…');
 
-    recognition.onresult = event => {
+    micRecognition.onresult = event => {
       $('message').value = event.results[0][0].transcript;
       status('Heard you. Tap Send.');
     };
 
-    recognition.onerror = event => {
-      log('Speech recognition error: ' + (event.error || 'unknown'));
-      status('Mic unavailable; check browser permission or type instead.');
+    micRecognition.onerror = event => {
+      log('Mic error: ' + event.error);
+      status('Microphone issue: ' + event.error);
     };
 
-    recognition.start();
+    micRecognition.start();
   } catch (error) {
-    log('Mic start failed: ' + (error?.message || error));
-    status('Could not start mic. Type instead.');
+    log('Mic start failed: ' + error.message);
+    status('Could not start microphone.');
   }
 };
 </script>
+
 </body>
 </html>
