@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#f7f4ee">
-<title>Claudeity</title>
+<title>Trumpity </title>
 <style>
 :root{--bg:#f7f4ee;--ink:#292722;--muted:#77736b;--line:#e5e0d7;--accent:#c66a45;--card:#fffdf9}
 *{box-sizing:border-box}
@@ -116,7 +116,7 @@ main{padding-bottom:var(--composer-h,180px)}
 <body>
 <header>
   <div>
-    <div class="brand" id="brand" title="Triple-tap for costume mode"><span class="spark">✳</span> Claudeity</div>
+    <div class="brand" id="brand" title="Triple-tap for costume mode"><span class="spark">✳</span> Trumpity </div>
     <div class="sub">Halloween AI • powered by Qwen</div>
   </div>
   <div>
@@ -132,13 +132,13 @@ main{padding-bottom:var(--composer-h,180px)}
     <p id="idleLine">Talk naturally. Turn on Voice Chat and say “stop” whenever you want to end it.</p>
   </section>
   <section id="chat" class="chat">
-    <div class="msg assistant"><div class="name">Claudeity</div><div>Hey, it’s Claudeity. Ask me anything. 🎃</div></div>
+    <div class="msg assistant"><div class="name">Trumpity </div><div>Hey, it’s Trumpity . Ask me anything. 🎃</div></div>
   </section>
 </main>
 
 <div class="composer">
   <div class="panel">
-    <textarea id="message" rows="1" placeholder="Message Claudeity…" enterkeyhint="send"></textarea>
+    <textarea id="message" rows="1" placeholder="Message Trumpity …" enterkeyhint="send"></textarea>
 
     <div class="actions">
       <button id="send" class="btn primary">Send ↗</button>
@@ -153,10 +153,10 @@ main{padding-bottom:var(--composer-h,180px)}
     </div>
 
     <div id="status" class="status">Connect your Colab backend in Setup.</div>
-    <div id="audioHelp" class="audio-help cfg-only">On iPhone, tap “Enable Audio” once before trying spoken replies. Triple-tap the Claudeity name to leave costume mode.</div>
+    <div id="audioHelp" class="audio-help cfg-only">On iPhone, tap “Enable Audio” once before trying spoken replies. Triple-tap the Trumpity  name to leave costume mode.</div>
 
     <div id="debugConsole" class="debug-console hidden cfg-only">
-      <strong>Claudeity debug console</strong>
+      <strong>Trumpity  debug console</strong>
       <div class="debug-actions">
         <button id="retryAudio" class="btn">▶ Retry last audio</button>
         <button id="clearDebug" class="btn">Clear log</button>
@@ -206,7 +206,7 @@ function log(message) {
     box.textContent += (box.textContent ? '\n' : '') + line;
     box.scrollTop = box.scrollHeight;
   }
-  console.log('[Claudeity]', message);
+  console.log('[Trumpity ]', message);
 }
 
 function status(message) {
@@ -225,7 +225,7 @@ function add(role, text) {
 
   const name = document.createElement('div');
   name.className = 'name';
-  name.textContent = role === 'assistant' ? 'Claudeity' : 'You';
+  name.textContent = role === 'assistant' ? 'Trumpity ' : 'You';
 
   const body = document.createElement('div');
   body.textContent = text;
@@ -255,7 +255,7 @@ const SILENT_WAV =
 /*
  * One shared audio element for every reply.
  * iOS unlocks playback per element, so the element a tap unlocks
- * must be the same one that later plays Claudeity's voice.
+ * must be the same one that later plays Trumpity 's voice.
  */
 function player() {
   if (!currentAudio) {
@@ -443,7 +443,7 @@ function finishUtterance() {
 
   // Release the microphone BEFORE the request so
   // Safari can switch the audio session to playback.
-  pauseListening('waiting for Claudeity');
+  pauseListening('waiting for Trumpity ');
 
   $('message').value = text;
   send();
@@ -793,7 +793,7 @@ async function send() {
         isSpeaking = false;
 
         if (voiceChatOn) {
-          resumeListening('Claudeity finished speaking');
+          resumeListening('Trumpity  finished speaking');
         } else {
           status('Reply finished.');
         }
@@ -814,7 +814,7 @@ async function send() {
       // Recognition was stopped before this point.
       // Now Safari can attempt to play the generated response.
       isSpeaking = true;
-      status('Claudeity is speaking…');
+      status('Trumpity  is speaking…');
 
       try {
         await audio.play();
@@ -862,7 +862,7 @@ async function send() {
 
 /* ---------- Costume mode ---------- */
 
-// Spark animation follows what Claudeity is doing.
+// Spark animation follows what Trumpity  is doing.
 setInterval(() => {
   const state = isSpeaking ? 'speaking' : busy ? 'thinking' : 'idle';
   if (document.body.dataset.state !== state) document.body.dataset.state = state;
@@ -909,7 +909,7 @@ setInterval(() => {
 function setCostume(on) {
   document.body.classList.toggle('costume', on);
   $('idleLine').textContent = on ? idleLines[0] : defaultIdle;
-  try { localStorage.setItem('claudeity-costume', on ? '1' : '0'); } catch (_) {}
+  try { localStorage.setItem('Trumpity -costume', on ? '1' : '0'); } catch (_) {}
   log('Costume mode: ' + on);
 }
 
@@ -929,7 +929,7 @@ $('brand').addEventListener('click', () => {
 });
 
 try {
-  if (localStorage.getItem('claudeity-costume') === '1') setCostume(true);
+  if (localStorage.getItem('Trumpity -costume') === '1') setCostume(true);
 } catch (_) {}
 
 // Keep the last message clear of the composer, whatever its height.
